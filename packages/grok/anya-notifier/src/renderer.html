@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8" />
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; media-src 'self' blob:; img-src 'self' data: blob:; style-src 'self'; object-src 'none'; base-uri 'none'" />
+<title>Anya Notify</title>
+<link rel="stylesheet" href="./renderer.css" />
+</head>
+<body>
+  <div id="stage">
+    <div id="bubble" aria-live="polite">
+      <div class="bubble-header">
+        <span class="cli-tag" id="cliTag">CLI</span>
+        <span class="title" id="bubbleTitle"></span>
+      </div>
+      <div class="msg" id="bubbleMsg"></div>
+      <div class="source-summary" id="sourceSummary" hidden></div>
+    </div>
+
+    <div id="petContainer" aria-label="Anya completion reminder">
+      <canvas id="pet" aria-hidden="true"></canvas>
+      <video id="petVideo" muted loop playsinline></video>
+      <img id="petImage" alt="Anya" />
+      <div id="badge"><span class="star">★</span><span id="badgeCount">1</span></div>
+    </div>
+  </div>
+
+<script src="./renderer.js"></script>
+</body>
+</html>

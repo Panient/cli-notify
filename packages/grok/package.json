@@ -1,0 +1,31 @@
+{
+  "name": "ai-cli-notify-grok",
+  "version": "0.3.0",
+  "description": "Windows task-completion notifications for Grok Build. Independent adapter with an aggregated Anya reminder.",
+  "license": "MIT",
+  "keywords": [
+    "grok",
+    "notifications",
+    "windows",
+    "cli-plugin"
+  ],
+  "os": [
+    "win32"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "ai-cli-notify-grok": "cli.cjs"
+  },
+  "files": [
+    "cli.cjs",
+    "README.md",
+    "LICENSE",
+    "runtime/",
+    "hooks.json",
+    "plugin.json",
+    "hooks/",
+    "anya-notifier/"
+  ]
+}

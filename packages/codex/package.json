@@ -1,0 +1,32 @@
+{
+  "name": "ai-cli-notify-codex",
+  "version": "0.3.0",
+  "description": "Windows task-completion notifications for code CLI. Independent adapter with an aggregated Anya reminder.",
+  "license": "MIT",
+  "keywords": [
+    "codex",
+    "notifications",
+    "windows",
+    "cli-plugin"
+  ],
+  "os": [
+    "win32"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "ai-cli-notify-codex": "cli.cjs"
+  },
+  "files": [
+    "cli.cjs",
+    "README.md",
+    "LICENSE",
+    "runtime/",
+    "hooks.json",
+    "plugin.json",
+    ".codex-plugin/",
+    ".agents/",
+    "anya-notifier/"
+  ]
+}

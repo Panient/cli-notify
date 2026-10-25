@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "AfterAgent": [
+      {
+        "hooks": [
+          {
+            "name": "AI CLI Notify",
+            "type": "command",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"${extensionPath}/runtime/hook.ps1\" -Source Gemini -GeminiOutput",
+            "timeout": 5000
+          }
+        ]
+      }
+    ]
+  }
+}

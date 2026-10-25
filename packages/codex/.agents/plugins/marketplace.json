@@ -1,0 +1,22 @@
+{
+  "name": "ai-cli-notify",
+  "interface": {
+    "displayName": "AI CLI Notify"
+  },
+  "plugins": [
+    {
+      "name": "ai-cli-notify",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "description": "Windows task-completion notifications for Codex CLI.",
+      "version": "0.3.0",
+      "keywords": [
+        "notifications",
+        "windows",
+        "hooks"
+      ]
+    }
+  ]
+}

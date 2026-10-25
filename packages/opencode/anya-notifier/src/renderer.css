@@ -1,0 +1,313 @@
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  font-family: "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+}
+
+#stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  box-sizing: border-box;
+  cursor: grab;
+  touch-action: none;
+}
+
+#stage:active {
+  cursor: grabbing;
+}
+
+/* Speech bubble: Eden Academy cream card with a gold rim */
+#bubble {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%) translateY(6px) scale(0.92);
+  background: linear-gradient(180deg, #fffdf9 0%, #fff4f6 100%);
+  border: 2px solid #352731;
+  outline: 2px solid rgba(232, 185, 96, 0.78);
+  border-radius: 15px;
+  padding: 9px 16px 8px;
+  box-shadow: 0 6px 18px rgba(30, 18, 26, 0.25), 0 1.5px 0 #f2cd78 inset;
+  width: max-content;
+  min-width: 0;
+  text-align: left;
+  opacity: 0;
+  transition: opacity 0.24s cubic-bezier(0.2, 1.3, 0.4, 1),
+              transform 0.24s cubic-bezier(0.2, 1.3, 0.4, 1);
+  pointer-events: none;
+  max-width: calc(100% - 28px);
+  box-sizing: border-box;
+  z-index: 10;
+  cursor: grab;
+}
+
+#bubble.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0) scale(1);
+  pointer-events: none;
+}
+
+#bubble.aborted {
+  background: linear-gradient(180deg, #f9f7fc 0%, #ede8f5 100%);
+  border-color: #3f3852;
+  outline-color: rgba(132, 120, 168, 0.7);
+}
+
+.bubble-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.cli-tag {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #1f4e43;
+  color: #fae19c;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  border: 1px solid #d9ad55;
+}
+
+#bubble.aborted .cli-tag {
+  background: #52436b;
+  color: #e6dff5;
+  border-color: #9685b5;
+}
+
+#bubble .title,
+#bubble .msg {
+  white-space: nowrap;
+}
+
+#bubble .title {
+  font-size: 16px;
+  font-weight: 800;
+  color: #2a1e26;
+}
+
+#bubble .msg {
+  font-size: 14px;
+  font-weight: 600;
+  color: #5c4652;
+  margin-top: 3px;
+  max-width: none;
+}
+
+/* Only shown while multiple terminal tasks are pending. A single completed
+   turn needs no summary row or artificially wide speech bubble. */
+.source-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px 10px;
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid rgba(83, 60, 69, 0.18);
+  max-width: 470px;
+  white-space: normal;
+}
+
+.source-summary[hidden] {
+  display: none;
+}
+
+.source-item {
+  color: #66515c;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+}
+
+.source-count {
+  display: inline-block;
+  min-width: 17px;
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: #eadde1;
+  color: #6e3f51;
+  font-size: 10px;
+  text-align: center;
+  box-sizing: border-box;
+}
+
+/* Tail pointing down at Anya */
+#bubble::before {
+  content: "";
+  position: absolute;
+  bottom: -9px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 8px solid transparent;
+  border-top-color: #352731;
+  border-bottom: 0;
+}
+
+#bubble::after {
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  left: 50%;
+  transform: translateX(-50%);
+  border: 6px solid transparent;
+  border-top-color: #fff4f6;
+  border-bottom: 0;
+}
+
+#bubble.aborted::after {
+  border-top-color: #ede8f5;
+}
+
+/* Character */
+#petContainer {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  overflow: visible;
+  touch-action: none;
+}
+
+#pet {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  pointer-events: none;
+  filter: drop-shadow(0 4px 8px rgba(30, 18, 25, 0.28));
+  transition: transform 0.16s ease;
+}
+
+#petContainer:hover #pet {
+  transform: translateY(-2px) scale(1.03);
+}
+
+video#petVideo,
+img#petImage {
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  max-width: 100%;
+  display: none;
+  margin: 0 auto;
+  object-fit: contain;
+  filter: drop-shadow(0 4px 8px rgba(30, 18, 25, 0.28));
+  transform: translateX(-50%);
+  z-index: 1;
+  pointer-events: none;
+}
+
+img#petImage {
+  transform-origin: 50% 90%;
+  animation: anya-float 3.2s ease-in-out infinite;
+  image-rendering: auto;
+}
+
+#petContainer.celebrating img#petImage {
+  animation: anya-celebrate 0.72s cubic-bezier(0.22, 0.75, 0.3, 1.25) 2;
+}
+
+#petContainer.aborted img#petImage {
+  animation: anya-gentle-sway 2.8s ease-in-out infinite;
+}
+
+@keyframes anya-float {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(-2.5px); }
+}
+
+@keyframes anya-celebrate {
+  0%, 100% { transform: translateX(-50%) translateY(0) rotate(0); }
+  32% { transform: translateX(-50%) translateY(-9px) rotate(-2deg); }
+  68% { transform: translateX(-50%) translateY(-2px) rotate(2deg); }
+}
+
+@keyframes anya-gentle-sway {
+  0%, 100% { transform: translateX(-50%) rotate(0); }
+  50% { transform: translateX(-50%) rotate(-1deg); }
+}
+
+/* Pending count: red Stella-star badge */
+#badge {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  min-width: 24px;
+  height: 22px;
+  box-sizing: border-box;
+  border-radius: 11px;
+  background: linear-gradient(135deg, #d93848 0%, #9e1928 100%);
+  border: 1.5px solid #f7d674;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 800;
+  padding: 0 5px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.32);
+  opacity: 0;
+  transform: scale(0.6);
+  transition: opacity 0.2s ease, transform 0.2s cubic-bezier(0.2, 1.4, 0.4, 1);
+  pointer-events: none;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+}
+
+#badge .star {
+  color: #ffe27a;
+  font-size: 10px;
+}
+
+#badge.show {
+  opacity: 1;
+  transform: scale(1);
+}
+
+@keyframes pop-in {
+  0% { transform: translateY(28px) scale(0.55); opacity: 0; }
+  62% { transform: translateY(-5px) scale(1.05); opacity: 1; }
+  82% { transform: translateY(2px) scale(0.98); opacity: 1; }
+  100% { transform: translateY(0) scale(1); opacity: 1; }
+}
+
+.pop {
+  animation: pop-in 0.42s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+
+  #petContainer img#petImage {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}

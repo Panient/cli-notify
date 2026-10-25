@@ -1,0 +1,11 @@
+{
+  "name": "ai-cli-notify",
+  "displayName": "AI CLI Notify",
+  "version": "0.3.0",
+  "description": "Windows task-completion notifications for Claude Code.",
+  "license": "MIT",
+  "author": {
+    "name": "AI CLI Notify"
+  },
+  "hooks": "./hooks.json"
+}

@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"$GROK_PLUGIN_ROOT/runtime/hook.ps1\" -Source GrokBuild",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "name": "anya-notifier",
+  "version": "0.3.0",
+  "description": "Anya-image completion reminder for AI CLI Notify. Appears only when a turn finishes.",
+  "private": true,
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "ensure": "node scripts/ensure-electron.js",
+    "test": "node --test test/*.test.js"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0"
+  }
+}

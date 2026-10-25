@@ -1,0 +1,32 @@
+{
+  "name": "ai-cli-notify-opencode",
+  "version": "0.3.0",
+  "description": "Windows task-completion notifications for OpenCode. Independent adapter with an aggregated Anya reminder.",
+  "license": "MIT",
+  "keywords": [
+    "opencode",
+    "notifications",
+    "windows",
+    "cli-plugin"
+  ],
+  "os": [
+    "win32"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "ai-cli-notify-opencode": "cli.cjs"
+  },
+  "files": [
+    "index.js",
+    "ai-cli-notify-*.ps1",
+    "cli.cjs",
+    "README.md",
+    "LICENSE",
+    "anya-notifier/"
+  ],
+  "type": "module",
+  "main": "./index.js",
+  "exports": "./index.js"
+}

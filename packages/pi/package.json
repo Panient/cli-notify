@@ -1,0 +1,37 @@
+{
+  "name": "ai-cli-notify-pi",
+  "version": "0.3.0",
+  "description": "Windows task-completion notifications for Pi. Independent adapter with an aggregated Anya reminder.",
+  "license": "MIT",
+  "keywords": [
+    "pi",
+    "notifications",
+    "windows",
+    "cli-plugin"
+  ],
+  "os": [
+    "win32"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "ai-cli-notify-pi": "cli.cjs"
+  },
+  "files": [
+    "extension.ts",
+    "runtime/",
+    "cli.cjs",
+    "README.md",
+    "LICENSE",
+    "anya-notifier/"
+  ],
+  "pi": {
+    "extensions": [
+      "./extension.ts"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}

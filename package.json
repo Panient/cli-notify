@@ -1,0 +1,20 @@
+{
+  "name": "ai-cli-notify",
+  "version": "0.3.0",
+  "description": "Windows task-completion notifications for AI coding CLIs.",
+  "type": "module",
+  "main": "./adapters/opencode/ai-cli-notify.js",
+  "exports": "./adapters/opencode/ai-cli-notify.js",
+  "keywords": ["opencode", "pi", "notifications", "windows"],
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build-packages.cjs",
+    "verify": "node scripts/verify-packages.cjs",
+    "test": "node --test anya-notifier/test/*.test.js && node scripts/adapter-entries.test.cjs && node scripts/test-installers.cjs && node scripts/verify-packages.cjs",
+    "test:visual": "node anya-notifier/test/visual-smoke.js"
+  },
+  "pi": {
+    "extensions": ["./adapters/pi/ai-cli-notify.ts"]
+  }
+}
