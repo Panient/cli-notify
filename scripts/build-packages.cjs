@@ -41,7 +41,7 @@ function writeJson(file, data) {
 }
 
 function copyRuntime(destination, openCode = false) {
-  for (const name of ["hook", "dispatch", "overlay"]) {
+  for (const name of ["hook", "dispatch"]) {
     const target = openCode ? `ai-cli-notify-${name}.ps1` : `${name}.ps1`;
     copyFile(path.join(root, "runtime", `${name}.ps1`), path.join(destination, target));
   }

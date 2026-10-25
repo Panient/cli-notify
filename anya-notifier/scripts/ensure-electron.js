@@ -10,7 +10,7 @@ const path = require("path");
 const os = require("os");
 const crypto = require("crypto");
 const https = require("https");
-const { execFileSync } = require("child_process");
+const { execFileSync, spawn } = require("child_process");
 
 const VERSION = process.env.ANYA_NOTIFY_ELECTRON_VERSION || "33.4.11";
 const MIRROR = process.env.ANYA_NOTIFY_ELECTRON_MIRROR || "https://npmmirror.com/mirrors/electron/";
@@ -31,6 +31,36 @@ if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(VERSION)) {
 
 function log(message) {
   console.log("[anya-notifier] " + message);
+}
+
+function installSharedBootstrap() {
+  if (process.platform !== "win32") return;
+  const directory = path.join(CACHE_ROOT, "bootstrap");
+  const script = path.join(directory, "ensure-electron.js");
+  const shim = path.join(directory, "ensure-electron.cmd");
+  fs.mkdirSync(directory, { recursive: true });
+  // This stable user-cache copy never points into an npx temporary directory.
+  if (path.resolve(__filename) !== path.resolve(script)) fs.copyFileSync(__filename, script);
+  fs.writeFileSync(shim, `@echo off\r\n"${process.execPath}" "${script}" %*\r\nexit /b %ERRORLEVEL%\r\n`);
+}
+
+function startAnya(appDir, stateDirectory) {
+  const electron = findExisting();
+  if (!electron || !isRegularFile(path.join(appDir, "src", "main.js"))) return false;
+  const child = spawn(electron, [appDir], {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+    env: {
+      ...process.env,
+      NODE_OPTIONS: "",
+      LOCALAPPDATA: process.env.LOCALAPPDATA || os.tmpdir(),
+      AI_CLI_NOTIFY_STATE_DIRECTORY: stateDirectory || "",
+    },
+  });
+  child.unref();
+  log("Anya started; queued events will be consumed by the single Electron front-end.");
+  return true;
 }
 
 function isRegularFile(filePath) {
@@ -376,11 +406,22 @@ async function ensure() {
   }
 }
 
+async function bootstrap(appDirectory, stateDirectory) {
+  installSharedBootstrap();
+  await ensure();
+  if (appDirectory) startAnya(appDirectory, stateDirectory);
+}
+
 if (require.main === module) {
-  ensure().catch((error) => {
+  const appArgument = process.argv.indexOf("--app-dir");
+  const stateArgument = process.argv.indexOf("--state-directory");
+  bootstrap(
+    appArgument >= 0 ? process.argv[appArgument + 1] : null,
+    stateArgument >= 0 ? process.argv[stateArgument + 1] : null,
+  ).catch((error) => {
     console.error("[anya-notifier] failed to ensure Electron:", error.message);
     process.exit(1);
   });
 }
 
-module.exports = { ensure, findExisting };
+module.exports = { ensure, bootstrap, findExisting, installSharedBootstrap };

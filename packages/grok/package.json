@@ -1,6 +1,6 @@
 {
   "name": "ai-cli-notify-grok",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Windows task-completion notifications for Grok Build. Independent adapter with an aggregated Anya reminder.",
   "license": "MIT",
   "keywords": [

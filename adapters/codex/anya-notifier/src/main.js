@@ -8,7 +8,7 @@ const fs = require("fs");
 const path = require("path");
 const os = require("os");
 const https = require("https");
-const { execFile, spawn } = require("child_process");
+const { spawn } = require("child_process");
 const {
   compareEventsByCompletion,
   createPendingNotification,
@@ -34,8 +34,15 @@ let dragOrigin = null;
 let state = "hidden"; // hidden | celebrating
 let mutexProcess = null;
 let windowQueryInFlight = false;
+let windowQueryHandler = null;
+let windowQueryBuffer = "";
+let workerHandshakeHandler = null;
+let nativeWorker = null;
+let nativeWorkerStarted = false;
+const windowQuerySource = fs.readFileSync(path.join(__dirname, "window-query.ps1"), "utf8");
 let rendererReady = false;
 let renderedPresentationKey = null;
+let fixedWindowSize = null;
 let pending = []; // { windowHandle, windowProcessId, windowProcessStartTicks, source, aborted, leftTerminal, fallbackExpiry }
 let artworkDataUrl = readCachedArtwork();
 
@@ -126,9 +133,9 @@ function isWindowSender(event) {
 }
 
 ipcMain.on("anya:drag-start", (event) => {
-  if (!isWindowSender(event)) return;
+  if (!isWindowSender(event) || !fixedWindowSize) return;
   const [x, y] = win.getPosition();
-  dragOrigin = { x, y };
+  dragOrigin = { x, y, width: fixedWindowSize.width, height: fixedWindowSize.height };
 });
 
 ipcMain.on("anya:drag-move", (event, data = {}) => {
@@ -136,7 +143,14 @@ ipcMain.on("anya:drag-move", (event, data = {}) => {
   const dx = Number(data.dx);
   const dy = Number(data.dy);
   if (!Number.isFinite(dx) || !Number.isFinite(dy)) return;
-  win.setPosition(Math.round(dragOrigin.x + dx), Math.round(dragOrigin.y + dy), false);
+  // Dragging is a pure translation. Never recompute content dimensions here,
+  // even if the pointer crosses displays with different scale factors.
+  win.setBounds({
+    x: Math.round(dragOrigin.x + dx),
+    y: Math.round(dragOrigin.y + dy),
+    width: dragOrigin.width,
+    height: dragOrigin.height,
+  }, false);
   writeSavedPosition();
 });
 
@@ -216,88 +230,88 @@ async function ensureArtwork() {
   if (win && rendererReady) win.webContents.send("anya:artwork", { dataUrl: artworkDataUrl });
 }
 
-// PowerShell holds the named mutex on its main thread. This lets Anya and the
-// classic PowerShell overlay share one cross-process lock without a native
-// Node add-on. Closing stdin releases the mutex during normal app shutdown.
+// One long-lived helper owns the singleton mutex and answers Win32 window
+// queries over a pipe. Do not spawn PowerShell for every notification tick.
+function startNativeWorker() {
+  if (nativeWorkerStarted) return nativeWorker;
+  const workerPath = path.join(__dirname, "window-worker.ps1");
+  nativeWorkerStarted = true;
+  nativeWorker = spawn("powershell.exe", [
+    "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", workerPath,
+  ], {
+    stdio: ["pipe", "pipe", "ignore"],
+    windowsHide: true,
+    env: {
+      ...process.env,
+      AI_CLI_NOTIFY_MUTEX_NAME: process.env.AI_CLI_NOTIFY_MUTEX_NAME || "Local\\AiCliNotifyFrontend",
+      AI_CLI_NOTIFY_WINDOW_QUERY: windowQuerySource,
+    },
+  });
+  nativeWorker.stdout.setEncoding("utf8");
+  nativeWorker.stdout.on("data", (chunk) => {
+    windowQueryBuffer += chunk;
+    let newline;
+    while ((newline = windowQueryBuffer.indexOf("\n")) >= 0) {
+      const line = windowQueryBuffer.slice(0, newline).trim();
+      windowQueryBuffer = windowQueryBuffer.slice(newline + 1);
+      if (!line) continue;
+      if (workerHandshakeHandler) {
+        const handler = workerHandshakeHandler;
+        workerHandshakeHandler = null;
+        handler(line);
+      } else if (windowQueryHandler) {
+        const handler = windowQueryHandler;
+        windowQueryHandler = null;
+        handler(line);
+      }
+    }
+  });
+  nativeWorker.on("error", () => {
+    if (nativeWorkerStarted) app.quit();
+  });
+  nativeWorker.on("exit", () => {
+    if (nativeWorkerStarted) app.quit();
+  });
+  return nativeWorker;
+}
+
+function stopNativeWorker() {
+  nativeWorkerStarted = false;
+  nativeWorker = null;
+  mutexProcess = null;
+  windowQueryHandler = null;
+  workerHandshakeHandler = null;
+  windowQueryBuffer = "";
+}
+
 function acquireFrontendMutex() {
   return new Promise((resolve, reject) => {
-    const mutexName = process.env.AI_CLI_NOTIFY_MUTEX_NAME || "Local\\AiCliNotifyFrontend";
-    const script = String.raw`$ErrorActionPreference = 'Stop'
-$mutexName = [Environment]::GetEnvironmentVariable('AI_CLI_NOTIFY_MUTEX_NAME')
-$mutex = [System.Threading.Mutex]::new($false, $mutexName)
-$owned = $false
-try {
-  try { $owned = $mutex.WaitOne(15000) } catch [System.Threading.AbandonedMutexException] { $owned = $true }
-  if (-not $owned) {
-    [Console]::Out.WriteLine('BUSY')
-    [Console]::Out.Flush()
-  } else {
-    [Console]::Out.WriteLine('LOCKED')
-    [Console]::Out.Flush()
-    [void][Console]::In.ReadLine()
-  }
-} finally {
-  if ($owned) { try { $mutex.ReleaseMutex() } catch {} }
-  $mutex.Dispose()
-}`;
-    const encoded = Buffer.from(script, "utf16le").toString("base64");
-    const child = spawn(
-      "powershell.exe",
-      ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", encoded],
-      {
-        stdio: ["pipe", "pipe", "ignore"],
-        windowsHide: true,
-        env: { ...process.env, AI_CLI_NOTIFY_MUTEX_NAME: mutexName },
-      }
-    );
-    let output = "";
-    let settled = false;
+    const child = startNativeWorker();
     const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
+      stopNativeWorker();
       child.kill();
-      reject(new Error("Timed out acquiring the shared notifier mutex"));
+      reject(new Error("Timed out acquiring the Anya singleton mutex"));
     }, 20000);
-    const finish = (err, acquired) => {
-      if (settled) return;
-      settled = true;
+    workerHandshakeHandler = (line) => {
       clearTimeout(timer);
-      if (err) {
-        child.kill();
-        reject(err);
-      } else if (acquired) {
+      if (line === "LOCKED") {
         mutexProcess = child;
-        child.on("exit", () => {
-          if (mutexProcess === child) {
-            mutexProcess = null;
-            app.quit();
-          }
-        });
         resolve(true);
       } else {
+        stopNativeWorker();
         child.stdin.end();
         child.kill();
         resolve(false);
       }
     };
-    child.stdout.setEncoding("utf8");
-    child.stdout.on("data", (chunk) => {
-      output += chunk;
-      const line = output.split(/\r?\n/, 1)[0].trim();
-      if (line === "LOCKED") finish(null, true);
-      else if (line === "BUSY") finish(null, false);
-    });
-    child.on("error", (err) => finish(err));
-    child.on("exit", (code) => {
-      if (!settled) finish(new Error(`Mutex helper exited before acquiring the lock (${code})`));
-    });
   });
 }
 
 function releaseFrontendMutex() {
-  if (!mutexProcess) return;
-  try { mutexProcess.stdin.end(); } catch {}
-  mutexProcess = null;
+  const child = nativeWorker;
+  stopNativeWorker();
+  if (!child) return;
+  try { child.stdin.end("STOP\n"); } catch {}
 }
 
 // ---- Window ----------------------------------------------------------------
@@ -343,6 +357,7 @@ function createWindow() {
     dragOrigin = null;
     win = null;
     rendererReady = false;
+    fixedWindowSize = null;
     resetRenderedPresentation();
   });
 }
@@ -353,17 +368,25 @@ function workArea() {
 
 function resizeFixedWindow(width, height) {
   if (!win) return;
-  // Temporarily enable native resizing while applying the fixed reminder size,
-  // then restore the non-interactive window behavior.
-  const wasResizable = win.isResizable();
+  const nextSize = {
+    width: Math.max(1, Math.round(Number(width))),
+    height: Math.max(1, Math.round(Number(height))),
+  };
+  if (!Number.isFinite(nextSize.width) || !Number.isFinite(nextSize.height)) return;
+  if (fixedWindowSize && fixedWindowSize.width === nextSize.width && fixedWindowSize.height === nextSize.height) return;
+  // The same fixed bounds are used throughout a drag. Explicit min/max bounds
+  // also prevent Windows resize messages or DPI changes from growing the pet.
   win.setResizable(true);
-  win.setSize(width, height);
-  win.setResizable(wasResizable);
+  win.setMinimumSize(nextSize.width, nextSize.height);
+  win.setMaximumSize(nextSize.width, nextSize.height);
+  win.setSize(nextSize.width, nextSize.height);
+  win.setResizable(false);
+  fixedWindowSize = nextSize;
 }
 
 function positionExpanded(resize = true) {
   if (!win) return;
-  if (resize) resizeFixedWindow(config.expandedWidth, config.expandedHeight);
+  if (resize && !fixedWindowSize) resizeFixedWindow(config.expandedWidth, config.expandedHeight);
   const [windowWidth, windowHeight] = win.getSize();
   const wa = workArea();
   const defaultX = Math.round(wa.x + wa.width - windowWidth - config.marginX);
@@ -474,70 +497,39 @@ function readEvents() {
 }
 
 // ---- Dismissal detection ------------------------------------------------------
-// One batched PowerShell query per tick returns: the foreground window's root
-// handle, plus liveness for each pending terminal handle. This keeps native
-// calls to a single child process per tick regardless of notification count.
+// The one persistent helper batches Win32 queries over stdin/stdout. No new
+// PowerShell process is created per tick, regardless of notification count.
 
 function queryWindows(handles, cb) {
-  const list = handles.length ? handles.join(",") : "0";
-  const ps = `
-$sig = @'
-[DllImport("user32.dll")] public static extern System.IntPtr GetForegroundWindow();
-[DllImport("user32.dll")] public static extern System.IntPtr GetAncestor(System.IntPtr h, uint f);
-[DllImport("user32.dll")] public static extern bool IsWindow(System.IntPtr h);
-[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(System.IntPtr h, out uint processId);
-'@
-$t = Add-Type -MemberDefinition $sig -Name NW -Namespace AnyaNotify -PassThru
-$fg = $t::GetForegroundWindow()
-$fgRoot = if ($fg -eq [IntPtr]::Zero) { [IntPtr]::Zero } else { $t::GetAncestor($fg, 2) }
-if ($fgRoot -eq [IntPtr]::Zero) { $fgRoot = $fg }
-function Get-Identity($handle) {
-  $processId = [uint32]0
-  if ($handle -ne [IntPtr]::Zero) { [void]$t::GetWindowThreadProcessId($handle, [ref]$processId) }
-  $startTicks = ''
-  if ($processId -gt 0) {
-    try { $startTicks = (Get-Process -Id ([int]$processId) -ErrorAction Stop).StartTime.ToUniversalTime().Ticks.ToString() } catch {}
+  const child = nativeWorker;
+  if (!child || !mutexProcess || windowQueryHandler) return cb(null);
+  let settled = false;
+  const timer = setTimeout(() => finish(null), 4000);
+  function finish(result) {
+    if (settled) return;
+    settled = true;
+    clearTimeout(timer);
+    if (windowQueryHandler === handler) windowQueryHandler = null;
+    cb(result);
   }
-  return [pscustomobject]@{ processId = [int]$processId; startTicks = $startTicks }
-}
-$fgIdentity = Get-Identity $fgRoot
-$windows = @(
-foreach ($h in @(${list})) {
-  if ($h -gt 0 -and $t::IsWindow([System.IntPtr]$h)) {
-    $handle = [System.IntPtr]$h
-    $root = $t::GetAncestor($handle, 2)
-    if ($root -eq [IntPtr]::Zero) { $root = $handle }
-    $identity = Get-Identity $root
-    [pscustomobject]@{ handle = [long]$h; root = $root.ToInt64(); processId = $identity.processId; startTicks = $identity.startTicks }
-  }
-}
-)
-[pscustomobject]@{
-  foreground = [pscustomobject]@{ root = $fgRoot.ToInt64(); processId = $fgIdentity.processId; startTicks = $fgIdentity.startTicks }
-  windows = @($windows)
-} | ConvertTo-Json -Compress -Depth 4
-`;
-  execFile(
-    "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-Command", ps],
-    { timeout: 4000, windowsHide: true },
-    (err, stdout) => {
-      if (err) return cb(null);
-      try {
-        const result = JSON.parse(String(stdout).trim());
-        const windowEntries = Array.isArray(result.windows)
-          ? result.windows
-          : (result.windows ? [result.windows] : []);
-        const windows = new Map(windowEntries.map((w) => [Number(w.handle), w]));
-        cb({
-          foreground: result.foreground || { root: 0, processId: 0, startTicks: "" },
-          windows,
-        });
-      } catch {
-        cb(null);
-      }
+  function handler(line) {
+    if (!line || line === "ERROR") return finish(null);
+    try {
+      const result = JSON.parse(line);
+      const entries = Array.isArray(result.windows) ? result.windows : (result.windows ? [result.windows] : []);
+      finish({
+        foreground: result.foreground || { root: 0, processId: 0, startTicks: "" },
+        windows: new Map(entries.map((item) => [Number(item.handle), item])),
+      });
+    } catch {
+      finish(null);
     }
-  );
+  }
+  windowQueryHandler = handler;
+  const list = handles.length ? handles.join(",") : "0";
+  child.stdin.write(`QUERY ${list}\n`, (error) => {
+    if (error) finish(null);
+  });
 }
 
 function tick() {
@@ -593,7 +585,9 @@ if (!gotLock) {
       return;
     }
     ensureQueueDir();
+    ensureQueueDir();
     createWindow();
+    readEvents();
     ensureArtwork().catch((err) => {
       console.warn("[anya-notifier] using the built-in character because artwork is unavailable:", err.message);
     });

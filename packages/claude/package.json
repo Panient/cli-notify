@@ -1,6 +1,6 @@
 {
   "name": "ai-cli-notify-claude",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Windows task-completion notifications for Claude Code. Independent adapter with an aggregated Anya reminder.",
   "license": "MIT",
   "keywords": [

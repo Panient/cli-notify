@@ -63,7 +63,7 @@ for (const platform of platforms) {
     const content = fs.readFileSync(file, "utf8");
     for (const other of foreignPlatforms[platform]) {
       const isGenericSharedRuntime = /(?:^|[\\/])(?:runtime|anya-notifier)[\\/]/.test(file) ||
-        /ai-cli-notify-(?:hook|dispatch|overlay)\.ps1$/.test(file);
+        /ai-cli-notify-(?:hook|dispatch)\.ps1$/.test(file);
       if (!isGenericSharedRuntime) {
         assert.ok(!content.includes(`-Source ${other}`) && !content.includes(`"${other}"`),
           `${platform} adapter contains another platform (${other}): ${file}`);
@@ -75,7 +75,7 @@ for (const platform of platforms) {
     const entry = fs.readFileSync(path.join(directory, "extension.ts"), "utf8");
     assert.ok(entry.includes("./runtime/hook.ps1"), "Pi must resolve its package-local runtime first");
     assert.ok(entry.includes("existsSync(bundledHook)"), "Pi must distinguish package and repository layouts");
-    for (const name of ["hook", "dispatch", "overlay"]) {
+    for (const name of ["hook", "dispatch"]) {
       assert.ok(fs.existsSync(path.join(directory, "runtime", `${name}.ps1`)), `Pi runtime/${name}.ps1 missing`);
       assert.ok(!fs.existsSync(path.join(directory, `${name}.ps1`)), `Pi ${name}.ps1 must be inside runtime/`);
     }
@@ -117,9 +117,9 @@ for (const platform of platforms) {
   }));
   const packedFiles = packed[0].files.map((file) => file.path.replaceAll("/", "\\"));
   const requiredPacked = ["cli.cjs", "package.json", "anya-notifier\\src\\main.js", "anya-notifier\\src\\notification-state.js"];
-  if (platform === "opencode") requiredPacked.push("index.js", "ai-cli-notify-hook.ps1", "ai-cli-notify-dispatch.ps1", "ai-cli-notify-overlay.ps1");
+  if (platform === "opencode") requiredPacked.push("index.js", "ai-cli-notify-hook.ps1", "ai-cli-notify-dispatch.ps1");
   else {
-    requiredPacked.push("runtime\\hook.ps1", "runtime\\dispatch.ps1", "runtime\\overlay.ps1");
+    requiredPacked.push("runtime\\hook.ps1", "runtime\\dispatch.ps1");
     if (platform !== "pi") requiredPacked.push(["gemini", "grok"].includes(platform) ? "hooks\\hooks.json" : "hooks.json");
     if (platform === "pi") requiredPacked.push("extension.ts");
     if (platform === "gemini") requiredPacked.push("gemini-extension.json");
@@ -128,6 +128,9 @@ for (const platform of platforms) {
     if (platform === "codex") requiredPacked.push(".codex-plugin\\plugin.json", ".agents\\plugins\\marketplace.json");
   }
   for (const file of requiredPacked) assert.ok(packedFiles.includes(file), `${platform}: ${file} missing from actual npm tarball`);
+  assert.ok(!packedFiles.some((file) => /(?:^|\\)(?:overlay\.ps1|ai-cli-notify-overlay\.ps1)$/.test(file)), `${platform}: legacy overlay must not be shipped`);
+  const dispatcher = fs.readFileSync(path.join(directory, platform === "opencode" ? "ai-cli-notify-dispatch.ps1" : "runtime/dispatch.ps1"), "utf8");
+  assert.ok(!dispatcher.includes("overlay.ps1"), `${platform}: legacy overlay dispatch is forbidden`);
   assert.ok(packedFiles.every((file) => !/(?:^|\\)node_modules(?:\\|$)|(?:^|\\)test(?:\\|$)/i.test(file)), `${platform}: test/dependency leaked into npm tarball`);
   console.log(`OK ${manifest.name}: one adapter, Anya, shared runtime; ${packedFiles.length} packed files verified`);
 }

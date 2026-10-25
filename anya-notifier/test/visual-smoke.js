@@ -8,6 +8,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { spawn } = require("node:child_process");
+const native = process.platform === "win32" ? require("./windows-native.cjs") : null;
 
 if (process.platform !== "win32") {
   console.log("Skipped: the visual smoke test requires Windows.");
@@ -15,6 +16,7 @@ if (process.platform !== "win32") {
 }
 
 const appDir = path.resolve(__dirname, "..");
+const userArtwork = path.join(process.env.LOCALAPPDATA || "", "AI CLI Notify", "artwork", "anya.png");
 const electron = process.env.ANYA_NOTIFY_ELECTRON_PATH ||
   path.join(process.env.LOCALAPPDATA || "", "ai-cli-notify", "electron", "electron.exe");
 assert.ok(fs.existsSync(electron), `Electron not found: ${electron}. Run npm run ensure first.`);
@@ -31,12 +33,27 @@ const port = 19000 + (process.pid % 1000);
 // this test compete with a real notifier. Isolate the test instance completely.
 process.env.AI_CLI_NOTIFY_TEST = "1";
 process.env.AI_CLI_NOTIFY_MUTEX_NAME = `Local\\AiCliNotifyFrontendTest${process.pid}`;
+process.env.AI_CLI_NOTIFY_STATE_DIRECTORY = path.join(temporaryRoot, "AI CLI Notify");
+const nativeScript = native.nativeScript(temporaryRoot);
+// Artwork is not shipped in an adapter. Reuse the user's validated cache when
+// available so an offline visual test exercises the large PNG, not Canvas.
+if (fs.existsSync(userArtwork)) {
+  const artwork = path.join(temporaryRoot, "AI CLI Notify", "artwork", "anya.png");
+  fs.mkdirSync(path.dirname(artwork), { recursive: true });
+  fs.copyFileSync(userArtwork, artwork);
+}
 const child = spawn(electron, [appDir, `--remote-debugging-port=${port}`], {
   env: { ...process.env, LOCALAPPDATA: temporaryRoot, NODE_OPTIONS: "" },
   stdio: ["ignore", "pipe", "pipe"],
   windowsHide: true,
 });
 let childOutput = "";
+const originalExit = process.exit;
+process.exit = (code) => {
+  native.stopTree(child.pid);
+  native.stopHelpers(temporaryRoot);
+  originalExit(code);
+};
 child.stdout.on("data", (chunk) => { childOutput += chunk; });
 child.stderr.on("data", (chunk) => { childOutput += chunk; });
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -127,19 +144,41 @@ async function run() {
   assert.ok(single.width < 280, `Single-source bubble is too wide: ${JSON.stringify(single)}`);
   assert.ok(single.width <= single.viewport, "Single-source bubble overflows the window");
   assert.equal(single.summaryHidden, true);
+  assert.ok(fs.existsSync(path.join(temporaryRoot, "AI CLI Notify", "artwork", "anya.png")), "Large Anya artwork should be available for the visual test");
+  await sleep(500);
+  assert.equal(await evaluate(`document.getElementById('petImage').style.display`), "block", "Large Anya PNG is not displayed");
+  native.inspect(nativeScript, child.pid, { x: 1100, y: 80 });
+  // Let Windows finish its initial DPI-coordinate reconciliation before the
+  // baseline; subsequent real pointer drags must preserve exactly these bounds.
+  native.inspect(nativeScript, child.pid, { drag: true });
+  const beforeDrag = native.inspect(nativeScript, child.pid);
+  const afterHover = native.inspect(nativeScript, child.pid, { hover: true });
+  assert.deepEqual([afterHover.width, afterHover.height], [beforeDrag.width, beforeDrag.height], "Hovering must not enlarge Anya");
+  const afterDrag = native.inspect(nativeScript, child.pid, { drag: true });
+  assert.deepEqual([afterDrag.width, afterDrag.height], [beforeDrag.width, beforeDrag.height], "Dragging must not enlarge Anya");
+  assert.ok(afterDrag.x !== beforeDrag.x || afterDrag.y !== beforeDrag.y, "The real mouse drag did not move the native window");
   await capture("single");
 
   emit("same-2.json", "Codex", 200);
   emit("same-3.json", "Codex", 300);
   await sleep(1800);
-  const samePlatform = await evaluate(`({
-    tag: document.getElementById('cliTag').textContent,
-    badge: document.getElementById('badgeCount').textContent,
-    summary: document.getElementById('sourceSummary').textContent,
-  })`);
+  const samePlatform = await evaluate(`(() => {
+    const bubble = document.getElementById('bubble').getBoundingClientRect();
+    const badge = document.getElementById('badge').getBoundingClientRect();
+    return {
+      tag: document.getElementById('cliTag').textContent,
+      badgeText: document.getElementById('badgeCount').textContent,
+      summary: document.getElementById('sourceSummary').textContent,
+      bubble: { top: bubble.top, right: bubble.right },
+      badgeBounds: { top: badge.top, right: badge.right, left: badge.left, bottom: badge.bottom },
+    };
+  })()`);
   assert.equal(samePlatform.tag, "code CLI");
-  assert.equal(samePlatform.badge, "3");
+  assert.equal(samePlatform.badgeText, "3");
   assert.match(samePlatform.summary, /code CLI3/);
+  assert.ok(samePlatform.badgeBounds.top < samePlatform.bubble.top && samePlatform.badgeBounds.bottom > samePlatform.bubble.top, "Count badge must straddle the bubble's top edge");
+  assert.ok(samePlatform.badgeBounds.left < samePlatform.bubble.right && samePlatform.badgeBounds.right > samePlatform.bubble.right, "Count badge must straddle the bubble's right edge");
+  assert.ok(Math.abs(samePlatform.badgeBounds.right - samePlatform.bubble.right) < 20, "Count badge drifted away from the bubble");
   await capture("same-platform");
 
   emit("other-4.json", "Claude", 400);
@@ -163,7 +202,7 @@ async function run() {
   const pages = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
   assert.equal(pages.filter((item) => item.url.endsWith("renderer.html")).length, 1, "More than one Anya window was created");
   await capture("cross-platform");
-  console.log("Visual smoke test passed: compact single-source layout and one aggregated Anya window.");
+  console.log("Visual smoke test passed: large Anya, fixed hover/drag bounds, attached badge, and one aggregated window.");
 }
 
 run().catch((error) => {
@@ -171,8 +210,9 @@ run().catch((error) => {
   process.exitCode = 1;
 }).finally(async () => {
   if (socket) socket.close();
-  child.kill();
-  await sleep(500);
+  native.stopTree(child.pid);
+  native.stopHelpers(temporaryRoot);
+  await sleep(800);
   if (process.argv.includes("--keep") || process.env.AI_CLI_NOTIFY_VISUAL_KEEP === "1") {
     console.log(`Isolated test files retained at: ${temporaryRoot}`);
   } else {

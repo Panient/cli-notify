@@ -11,7 +11,7 @@ const platform = process.env.AI_CLI_NOTIFY_TEST_PLATFORM;
 const callsPath = process.env.AI_CLI_NOTIFY_TEST_CALLS;
 const statePath = process.env.AI_CLI_NOTIFY_TEST_STATE;
 const installRoot = process.env.AI_CLI_NOTIFY_INSTALL_ROOT;
-const bundle = path.join(installRoot, `${platform}-0.3.0`);
+const bundle = path.join(installRoot, `${platform}-${require(path.join(root, "package.json")).version}`);
 
 function run(extraArgs = []) {
   const result = spawnSync(process.execPath, [path.join(root, "packages", platform, "cli.cjs"), ...extraArgs], { encoding: "utf8", env: process.env });
@@ -54,6 +54,8 @@ if (["codex", "claude", "gemini", "grok"].includes(platform)) {
   assert.ok(!fs.existsSync(path.join(bundle, "adapters")));
   assert.ok(!fs.existsSync(path.join(bundle, "electron")));
   assert.ok(!fs.existsSync(path.join(bundle, "anya-notifier/test")));
+  assert.ok(!fs.existsSync(path.join(bundle, "runtime/overlay.ps1")), `${platform}: legacy overlay must be deleted`);
+  assert.ok(fs.existsSync(path.join(process.env.LOCALAPPDATA, "ai-cli-notify", "bootstrap", "ensure-electron.cmd")), `${platform}: stable Electron bootstrap missing`);
   const firstCount = mutatingCalls().length;
   run();
   actions = mutatingCalls().slice(firstCount);

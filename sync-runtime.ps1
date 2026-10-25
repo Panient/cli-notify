@@ -11,7 +11,7 @@ $ErrorActionPreference = "Stop"
 
 $root = $PSScriptRoot
 $sourceDir = Join-Path $root "runtime"
-$files = @("hook.ps1", "overlay.ps1", "dispatch.ps1")
+$files = @("hook.ps1", "dispatch.ps1")
 $adapterDirs = @("codex", "claude", "grok") | ForEach-Object {
     Join-Path $root "adapters\$_\runtime"
 }
@@ -21,7 +21,6 @@ $anyaAdapterDirs = @("codex", "claude", "grok", "opencode") | ForEach-Object {
 }
 $openCodeScriptFiles = [ordered]@{
     "hook.ps1" = "ai-cli-notify-hook.ps1"
-    "overlay.ps1" = "ai-cli-notify-overlay.ps1"
     "dispatch.ps1" = "ai-cli-notify-dispatch.ps1"
 }
 
@@ -31,6 +30,12 @@ foreach ($dir in $adapterDirs) {
     foreach ($file in $files) {
         $sourcePath = Join-Path $sourceDir $file
         $targetPath = Join-Path $dir $file
+        $legacy = Join-Path $dir "overlay.ps1"
+        if (Test-Path -LiteralPath $legacy) {
+            $label = $legacy.Substring($root.Length + 1)
+            if ($Check) { Write-Output "EXTRANEOUS: $label"; $drifted.Add($label) }
+            else { Remove-Item -LiteralPath $legacy -Force; Write-Output "REMOVED: $label" }
+        }
 
         $needsSync = $true
         if (Test-Path -LiteralPath $targetPath) {
@@ -122,6 +127,12 @@ foreach ($dir in $anyaAdapterDirs) {
 # OpenCode loads a flat JS plugin directory, so its self-contained PowerShell
 # runtime scripts use stable, prefixed names next to the plugin entry point.
 $opencodeDir = Join-Path $root "adapters\opencode"
+$legacyOpenCode = Join-Path $opencodeDir "ai-cli-notify-overlay.ps1"
+if (Test-Path -LiteralPath $legacyOpenCode) {
+    $label = $legacyOpenCode.Substring($root.Length + 1)
+    if ($Check) { Write-Output "EXTRANEOUS: $label"; $drifted.Add($label) }
+    else { Remove-Item -LiteralPath $legacyOpenCode -Force; Write-Output "REMOVED: $label" }
+}
 foreach ($sourceName in $openCodeScriptFiles.Keys) {
     $sourcePath = Join-Path $sourceDir $sourceName
     $targetPath = Join-Path $opencodeDir $openCodeScriptFiles[$sourceName]

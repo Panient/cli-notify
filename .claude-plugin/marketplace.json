@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "Windows task-completion notifications for coding CLIs.",
-    "version": "0.3.0"
+    "version": "0.3.1"
   },
   "plugins": [
     {
       "name": "ai-cli-notify",
       "source": "./adapters/claude",
       "description": "Windows task-completion notifications for Claude Code.",
-      "version": "0.3.0",
+      "version": "0.3.1",
       "author": {
         "name": "AI CLI Notify"
       }

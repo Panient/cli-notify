@@ -1,18 +1,12 @@
-# Dispatch: picks the notifier front-end for a completed turn.
-#
-# Zero-setup, plugin-friendly:
-#   - Anya (Electron) is used when its runtime is available.
-#   - Otherwise the classic PowerShell overlay is used IMMEDIATELY (the user is
-#     never left without a reminder), and the Electron runtime is fetched in the
-#     background so later turns use Anya automatically.
-#
-# Runs from runtime/ (and from each adapter's self-contained runtime/ copy).
-# The Anya app itself is resolved relative to the plugin, or from a shared
-# per-user location that this script provisions on demand.
+# Dispatch the one and only front-end: the large Electron Anya reminder.
+# Events remain on disk until that Anya process consumes them. If Electron is
+# not ready, provision it and retry; never start a second/classic interface.
+# Runs from runtime/ and from each self-contained platform package.
 
 param(
     [string]$StateDirectory = (Join-Path $env:LOCALAPPDATA "AI CLI Notify"),
-    [string]$WorkerPath = ""
+    [int]$RetryCount = 1,
+    [int]$RetryDelaySeconds = 15
 )
 
 $ErrorActionPreference = "SilentlyContinue"
@@ -27,9 +21,12 @@ function Write-DispatchLog {
     } catch {}
 }
 
-if ([string]::IsNullOrWhiteSpace($WorkerPath)) {
-    $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-    $WorkerPath = Join-Path $scriptDir "overlay.ps1"
+function Test-AnyaDispatchEnabled {
+    if ($env:AI_CLI_NOTIFY_TEST) { return $false }
+    if ($env:AI_CLI_NOTIFY_STATE_DIRECTORY) {
+        return [IO.Path]::GetFullPath($env:AI_CLI_NOTIFY_STATE_DIRECTORY).TrimEnd('\') -ieq [IO.Path]::GetFullPath($StateDirectory).TrimEnd('\')
+    }
+    return $true
 }
 
 $sharedRoot = Join-Path $env:LOCALAPPDATA "ai-cli-notify"
@@ -43,6 +40,11 @@ $configPath = Join-Path $StateDirectory "anya-config.json"
 $config = @{}
 if (Test-Path -LiteralPath $configPath) {
     try { $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json } catch { $config = @{} }
+}
+$useAnya = ($config.useAnya -ne $false)
+if (-not $useAnya) {
+    Write-DispatchLog "Anya is disabled; event remains queued. The legacy overlay has been removed."
+    exit 0
 }
 
 # ---- Locate the Anya app (no copying; run it in place when possible) ---------
@@ -88,6 +90,7 @@ function Get-ElectronPath {
 
 # ---- Background provisioning of the Electron runtime -------------------------
 function Start-ElectronDownload {
+    if (-not (Test-AnyaDispatchEnabled)) { return }
     # A marker file prevents concurrent/duplicate downloads across rapid events.
     $marker = Join-Path $sharedRoot "electron-download.lock"
     if (Test-Path -LiteralPath $marker) {
@@ -116,21 +119,27 @@ function Start-ElectronDownload {
     if (-not $appDir) { return }
     $ensureScript = Join-Path $appDir "scripts\ensure-electron.js"
     if (-not (Test-Path -LiteralPath $ensureScript)) { return }
-    $node = Get-Command node.exe -ErrorAction SilentlyContinue
-    if (-not $node) { return }
 
     New-Item -ItemType Directory -Path $sharedRoot -Force | Out-Null
     try {
-        Start-Process -FilePath $node.Source -ArgumentList @("`"$ensureScript`"") -WindowStyle Hidden | Out-Null
-        Write-DispatchLog "background Electron download started"
+        # Reuse the explicit install bootstrap for npm and GitHub installs.
+        # A completed bootstrap atomically provisions the shared runtime.
+        $node = Get-Command node.exe -ErrorAction SilentlyContinue
+        $sharedBootstrap = Join-Path $sharedRoot "bootstrap\ensure-electron.cmd"
+        $launch = if ($node) { $node.Source } elseif (Test-Path -LiteralPath $sharedBootstrap) { $sharedBootstrap } else { $null }
+        if (-not $launch) {
+            Write-DispatchLog "Node.js is required for the first Electron bootstrap; event remains queued" "WARN"
+            return
+        }
+        Start-Process -FilePath $launch -ArgumentList @("`"$ensureScript`"", "--app-dir", "`"$appDir`"", "--state-directory", "`"$StateDirectory`"") -WindowStyle Hidden | Out-Null
+        Write-DispatchLog "background Electron bootstrap started"
     } catch {
-        Write-DispatchLog "could not start Electron download: $_" "WARN"
+        Write-DispatchLog "could not start Electron bootstrap: $_" "WARN"
         Remove-Item -LiteralPath $marker -Force -ErrorAction SilentlyContinue
     }
 }
 
-# ---- Choose front-end --------------------------------------------------------
-$useAnya = ($config.useAnya -ne $false)
+# ---- Choose the sole front-end ----------------------------------------------
 $appDir = Get-AnyaAppDir
 $electron = Get-ElectronPath
 
@@ -158,23 +167,23 @@ if ($useAnya -and $electron -and $appDir) {
         Write-DispatchLog "Anya notifier started"
         exit 0
     } catch {
-        Write-DispatchLog "Anya start failed, using overlay: $_" "WARN"
+        Write-DispatchLog "Anya start failed; event remains queued: $_" "ERROR"
     }
 } else {
-    Write-DispatchLog ("Anya unavailable (useAnya=$useAnya electron=" + [bool]$electron + " app=" + [bool]$appDir + ")")
+    Write-DispatchLog ("Anya unavailable; event remains queued (useAnya=$useAnya electron=" + [bool]$electron + " app=" + [bool]$appDir + ")")
     if ($useAnya -and $appDir -and -not $electron) {
         Start-ElectronDownload
     }
 }
 
-# Fallback: classic PowerShell overlay (immediate, dependency-free).
-if (Test-Path -LiteralPath $WorkerPath) {
-    $escapedWorker = $WorkerPath.Replace("'", "''")
-    $escapedState = $StateDirectory.Replace("'", "''")
-    $workerCommand = "& '$escapedWorker' -StateDirectory '$escapedState'"
-    $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($workerCommand))
-    Start-Process -FilePath "powershell.exe" -ArgumentList @(
-        "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encoded
-    ) | Out-Null
-    Write-DispatchLog "overlay.ps1 started"
+# A bounded retry covers the first Electron download. Later events dispatch
+# immediately, and the queue itself remains the durable source of truth.
+if ($useAnya -and $appDir -and $RetryCount -gt 0 -and (Test-AnyaDispatchEnabled)) {
+    $self = if ($PSCommandPath) { $PSCommandPath } else { $MyInvocation.MyCommand.Path }
+    if (Test-Path -LiteralPath $self) {
+        $command = "Start-Sleep -Seconds $([Math]::Max(1, $RetryDelaySeconds)); & '$($self.Replace("'", "''"))' -StateDirectory '$($StateDirectory.Replace("'", "''"))' -RetryCount $($RetryCount - 1) -RetryDelaySeconds $RetryDelaySeconds"
+        $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
+        Start-Process -FilePath "powershell.exe" -ArgumentList @("-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", $encoded) | Out-Null
+        Write-DispatchLog "Anya retry scheduled; no secondary notifier will be started"
+    }
 }

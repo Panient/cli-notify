@@ -6,7 +6,7 @@
 
 ## 安装（每个平台一条命令）
 
-将下面的命令复制到 **Windows PowerShell**。这些命令使用 npm 下载对应的小型插件包，再调用对应 CLI 的原生插件安装器。没有 npm 生命周期脚本，不会修改其他 CLI 的配置。
+将下面的命令复制到 **Windows PowerShell**。这些命令使用 npm 下载对应的小型插件包，准备一次共享 Electron，再调用对应 CLI 的原生插件安装器。没有 npm 生命周期脚本，不会修改其他 CLI 的配置。
 
 code CLI、Claude Code、Gemini CLI、Grok Build 的引导器会将所选平台包复制到 `%LOCALAPPDATA%\ai-cli-notify\plugins\<平台>-<版本>`，再使用原生注册/更新命令，因此不会依赖会被清理的 `npx` 临时目录。OpenCode 和 Pi 使用原生 npm 包管理，不需要这份固定副本。Gemini 首次安装可能显示原生的目录信任确认，请审查来源后自行确认；重复执行命令会更新同名插件。
 
@@ -44,6 +44,8 @@ npx --yes ai-cli-notify-codex --dry-run
 
 将 `OWNER/REPO` 替换为实际 GitHub 仓库。这里同样只安装对应平台的插件目录，不需要将所有平台插件启用到一个 CLI 中。
 
+GitHub 原生安装后，请在插件所在目录运行一次 `node .\anya-notifier\scripts\ensure-electron.js`，或在仓库根目录运行同一命令准备共享 Electron。它只准备运行时，不自动注册插件；首次下载期间完成的事件会排队，不会改弹旧浮标。
+
 ### code CLI
 
 ```powershell
@@ -76,7 +78,7 @@ grok plugin install OWNER/REPO#adapters/grok --trust
 opencode plugin ai-cli-notify-opencode --global
 ```
 
-OpenCode 原生 npm 插件机制需要已发布的 `ai-cli-notify-opencode` 包。尚未发布 npm 包时，可克隆仓库并复制 `adapters/opencode/` 到 `~/.config/opencode/plugins/`；复制内容包括 `ai-cli-notify.js`、三个带前缀的 PowerShell 文件和 `anya-notifier/`。
+OpenCode 原生 npm 插件机制需要已发布的 `ai-cli-notify-opencode` 包。尚未发布 npm 包时，可克隆仓库并复制 `adapters/opencode/` 到 `~/.config/opencode/plugins/`；复制内容包括 `ai-cli-notify.js`、两个带前缀的 PowerShell 文件和 `anya-notifier/`。
 
 ### Pi
 
@@ -109,21 +111,19 @@ pi install npm:ai-cli-notify-pi
 
 - 单个任务的气泡按平台名称和文字自适应宽度；`code CLI`、`Claude Code`、`Gemini CLI` 等平台有合适的内边距，不再使用固定的大方框。
 - 多任务时才显示来源汇总，窗口按需扩展，不影响普通单任务布局。
-- Anya 可拖动，位置自动保存；支持庆祝/中断动画、透明 PNG 和内置 Canvas 降级形象。
+- 只显示一个大号 Anya；没有经典长方形浮标或第二套提醒界面。
+- Anya 可拖动，位置自动保存；鼠标悬停和拖动都不会放大，窗口尺寸固定。
+- 多任务数字角标紧贴气泡右上角；支持庆祝/中断动画、透明 PNG 和内置 Canvas 降级形象。
 - 不显示在任务栏，不创建系统托盘图标，不主动获取焦点。
 - 返回来源终端或终端关闭后提醒消失；无法识别终端时，30 分钟后自动清理。
 - 如果任务结束时你仍在该终端，Anya 会等你离开终端再显示；返回该终端则清除对应提醒。无法识别终端时仍会立即提醒，避免漏报。
 - 诊断日志默认关闭；需要排查时可设置 `$env:AI_CLI_NOTIFY_LOG = "1"`，日志位于 `%LOCALAPPDATA%\AI CLI Notify\notify.log`，Electron 输出写入同目录的 `electron-*.log`。
 
-## 两种前端与 Electron
+## 单一 Anya 与 Electron
 
-`runtime/dispatch.ps1` 对每个事件选择一个前端：
+只保留 Electron 大号 Anya，旧 PowerShell 浮标及其回退入口已删除。所有事件先进入磁盘队列，再由一个 Electron 实例消费；单实例锁防止重复窗口。
 
-1. Electron 和 Anya 应用都可用时使用 Anya。
-2. 尚未准备好 Electron 时立即使用经典 PowerShell 悬浮窗，并在后台下载 Electron；后续任务自动使用 Anya。
-3. 一个事件只会被一个前端消费，前端间通过互斥锁避免双窗口。
-
-Electron 不重复打包到每个 CLI 插件中，下载一次后共享：
+显式安装命令会先准备共享 Electron。尚未准备好时任务事件仍保留，Electron 就绪后自动启动 Anya 并消费，不会用旧浮标代替。Electron 不重复打包到每个 CLI 插件中，下载一次后共享：
 
 ```text
 %LOCALAPPDATA%\ai-cli-notify\electron\electron.exe
@@ -131,7 +131,7 @@ Electron 不重复打包到每个 CLI 插件中，下载一次后共享：
 
 下载有进程锁、ZIP 路径检查和官方 SHA-256 校验。可通过 `ANYA_NOTIFY_ELECTRON_MIRROR`、`ANYA_NOTIFY_ELECTRON_VERSION` 配置镜像和版本，或通过 `ANYA_NOTIFY_ELECTRON_PATH` 使用已有运行时。
 
-经典悬浮窗无额外依赖；Anya 的首次 Electron 下载需要 Node.js。没有 Node.js 时会继续使用经典悬浮窗。
+首次 Electron 下载需要 Node.js；已下载后不再依赖 Node.js。没有 Node.js 时请安装 Node.js 22.19 或更新版本后重试安装命令，队列中的事件不会因此静默删除。
 
 ### 可选配置
 
@@ -148,7 +148,7 @@ Electron 不重复打包到每个 CLI 插件中，下载一次后共享：
 }
 ```
 
-- `useAnya: false` 强制经典悬浮窗，并停止 Electron 下载。
+- `useAnya: false` 暂停提醒和 Electron 下载；事件仍保留，恢复为 `true` 后重试。
 - 可选 `AI_CLI_NOTIFY_INSTALL_ROOT` 可改变四个本地路径型插件的固定安装根目录；Electron 缓存位置不随它改变。
 - `expandedWidth` / `expandedHeight` 控制普通 Anya 窗口大小。
 - `maxExpandedWidth` 仅限制多平台汇总时的扩展宽度。
@@ -186,10 +186,10 @@ Remove-Item -Recurse -Force "$env:LOCALAPPDATA\ai-cli-notify"
 
 ## 运行要求与安全
 
-- Windows，PowerShell 5.1 或更新版本。
-- 插件 hooks 以当前 Windows 用户权限运行。安装前请审查 `runtime/hook.ps1`、`runtime/dispatch.ps1`、`runtime/overlay.ps1`。
+- Windows，PowerShell 5.1 或更新版本；首次准备 Electron 需要 Node.js 22.19 或更新版本。
+- 插件 hooks 以当前 Windows 用户权限运行。安装前请审查 `runtime/hook.ps1`、`runtime/dispatch.ps1`。
 - 提醒不包含提示词、回复或代码。
-- 可选 Anya 下载 Electron 及其校验清单，并首次下载角色 PNG；禁用 Anya 后不会进行这些下载。
+- 首次运行下载 Electron 及其校验清单和角色 PNG；禁用 Anya 后不会进行这些下载。
 
 ## 发布与维护
 
@@ -217,7 +217,7 @@ GitHub 仓库只需提交 `packages/` 中的六个包目录；`.test-output/`、
 
 ### 项目结构
 
-- `runtime/`：事件解析、终端身份识别、队列、前端调度和经典悬浮窗。
+- `runtime/`：事件解析、终端身份识别、队列和单一 Anya 调度。
 - `anya-notifier/`：Electron 主进程、聚合状态、紧凑 UI、IPC 和 Electron 获取脚本。
 - `adapters/<platform>/`：GitHub 原生插件的自包含目录。
 - `packages/<platform>/`：独立 npm 分发包，由构建脚本生成。

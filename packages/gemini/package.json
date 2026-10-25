@@ -1,6 +1,6 @@
 {
   "name": "ai-cli-notify-gemini",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Windows task-completion notifications for Gemini CLI. Independent adapter with an aggregated Anya reminder.",
   "license": "MIT",
   "keywords": [

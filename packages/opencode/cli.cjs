@@ -139,7 +139,25 @@ function migrate() {
   }
 }
 
+function prepareElectron() {
+  const bootstrap = path.join(bundleRoot, "anya-notifier", "scripts", "ensure-electron.js");
+  if (!fs.existsSync(bootstrap)) throw new Error("The Anya Electron bootstrap is missing from this package.");
+  if (dryRun) {
+    console.log(`[dry-run] Prepare the shared Electron runtime once: ${process.execPath} ${bootstrap}`);
+    return;
+  }
+  console.log("Preparing the shared Anya Electron runtime (one per-user copy)...");
+  const result = spawnSync(process.execPath, [bootstrap], {
+    stdio: "inherit",
+    windowsHide: false,
+    env: { ...process.env, NODE_OPTIONS: "" },
+  });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`Could not prepare Electron (${result.status ?? "unknown"}). The task queue will retry after it is available.`);
+}
+
 function install() {
+  prepareElectron();
   switch (platform) {
     case "codex": {
       const existing = inspectInstalled();

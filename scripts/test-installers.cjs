@@ -86,15 +86,25 @@ for (const platform of ["codex", "claude", "gemini", "grok", "opencode", "pi"]) 
   const installRoot = path.join(platformDirectory, "stable");
   fs.writeFileSync(callsPath, "[]");
   fs.writeFileSync(statePath, JSON.stringify({ exists: false, source: null }));
-  const node = process.platform === "win32" ? "node.exe" : process.execPath;
+  const node = process.execPath;
   const script = path.join(__dirname, "installer.test.cjs");
-  const result = spawnSync(node, [script, platform], {
+  const testBin = path.join(platformDirectory, "test-bin");
+  const testLocalAppData = path.join(platformDirectory, "localappdata");
+  fs.mkdirSync(testBin, { recursive: true });
+  fs.mkdirSync(testLocalAppData, { recursive: true });
+  fs.copyFileSync(node, path.join(testBin, path.basename(node)));
+  const electronCache = path.join(testLocalAppData, "ai-cli-notify", "electron");
+  fs.mkdirSync(electronCache, { recursive: true });
+  fs.writeFileSync(path.join(electronCache, "electron.exe"), "isolated-test-placeholder");
+  fs.writeFileSync(path.join(electronCache, "electron-release.json"), JSON.stringify({ version: "33.4.11", artifact: "electron-v33.4.11-win32-x64.zip", sha256: "0".repeat(64) }));
+  const result = spawnSync(path.join(testBin, path.basename(node)), [script, platform], {
     cwd: root,
     encoding: "utf8",
     env: {
       ...process.env,
       NODE_OPTIONS: "",
-      PATH: `${bin}${path.delimiter}${process.env.PATH}`,
+      LOCALAPPDATA: testLocalAppData,
+      PATH: `${testBin}${path.delimiter}${bin}${path.delimiter}${process.env.PATH}`,
       AI_CLI_NOTIFY_TEST_BIN: bin,
       AI_CLI_NOTIFY_TEST_CALLS: callsPath,
       AI_CLI_NOTIFY_TEST_STATE: statePath,

@@ -2,7 +2,6 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const hookScript = fileURLToPath(new URL("./ai-cli-notify-hook.ps1", import.meta.url));
-const overlayScript = fileURLToPath(new URL("./ai-cli-notify-overlay.ps1", import.meta.url));
 const dispatchScript = fileURLToPath(new URL("./ai-cli-notify-dispatch.ps1", import.meta.url));
 
 export const AiCliNotifyPlugin = async () => ({
@@ -20,8 +19,6 @@ export const AiCliNotifyPlugin = async () => ({
         hookScript,
         "-Source",
         "OpenCode",
-        "-WorkerPath",
-        overlayScript,
         "-DispatchPath",
         dispatchScript,
         "-PayloadBase64",

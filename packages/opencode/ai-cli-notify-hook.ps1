@@ -6,7 +6,6 @@
     [string]$Payload,
     [string]$PayloadBase64,
     [switch]$GeminiOutput,
-    [string]$WorkerPath = "",
     [string]$DispatchPath = "",
     [string]$StateDirectory = (Join-Path $env:LOCALAPPDATA "AI CLI Notify")
 )
@@ -14,9 +13,6 @@
 # $PSScriptRoot can be empty in some interop contexts; fall back to the
 # directory of the running script so -File invocation always resolves.
 $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
-if ([string]::IsNullOrWhiteSpace($WorkerPath)) {
-    $WorkerPath = Join-Path $scriptDir "overlay.ps1"
-}
 
 $ErrorActionPreference = "SilentlyContinue"
 
@@ -141,7 +137,7 @@ if ($message.Length -gt 240) {
     $message = $message.Substring(0, 237) + "..."
 }
 
-if ($shouldNotify -and (Test-Path -LiteralPath $WorkerPath)) {
+if ($shouldNotify) {
     try {
         $windowHandle = [Int64]0
         $windowProcessId = [Int64]0
@@ -269,10 +265,9 @@ public static class AiCliNotifyWindowNative {
         [IO.File]::WriteAllText($temporaryPath, $eventJson, (New-Object Text.UTF8Encoding($false)))
         Move-Item -LiteralPath $temporaryPath -Destination $eventPath
 
-        # Dispatch to the best available front-end. dispatch.ps1 decides between
-        # the Anya (Electron) notifier and the classic PowerShell overlay, so
-        # exactly ONE consumes the event queue. Falls back to overlay.ps1 inline
-        # if the dispatcher script is missing (keeps adapter copies working).
+        # There is only one front-end: the large Electron Anya. The durable
+        # queue above is written before dispatch, so an unavailable runtime
+        # never causes the completed task to be silently discarded.
         $dispatcher = $null
         $dispatcherCandidates = [System.Collections.Generic.List[string]]::new()
         if (-not [string]::IsNullOrWhiteSpace($DispatchPath)) {
@@ -284,34 +279,23 @@ public static class AiCliNotifyWindowNative {
         foreach ($candidate in $dispatcherCandidates) {
             if (Test-Path -LiteralPath $candidate) { $dispatcher = $candidate; break }
         }
-        if (Test-Path -LiteralPath $dispatcher) {
+        if ($dispatcher) {
             try {
                 $escapedDispatch = $dispatcher.Replace("'", "''")
                 $escapedStateDirectory = $StateDirectory.Replace("'", "''")
-                $dispatchCommand = "& '$escapedDispatch' -StateDirectory '$escapedStateDirectory' -WorkerPath '$($WorkerPath.Replace("'","''"))'"
+                $dispatchCommand = "& '$escapedDispatch' -StateDirectory '$escapedStateDirectory'"
                 $encodedDispatch = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($dispatchCommand))
                 Start-Process -FilePath "powershell.exe" -ArgumentList @(
                     "-NoProfile",
                     "-ExecutionPolicy", "Bypass",
                     "-EncodedCommand", $encodedDispatch
                 ) | Out-Null
-                Write-AiCliNotifyLog "dispatcher started"
+                Write-AiCliNotifyLog "Anya dispatcher started"
             } catch {
-                Write-AiCliNotifyLog "dispatcher failed, using overlay: $_" "WARN"
-                $dispatcher = $null  # force inline fallback below
+                Write-AiCliNotifyLog "Anya dispatcher failed; event remains queued: $_" "ERROR"
             }
-        }
-        if (-not (Test-Path -LiteralPath ([string]$dispatcher))) {
-            $escapedWorker = $WorkerPath.Replace("'", "''")
-            $escapedStateDirectory = $StateDirectory.Replace("'", "''")
-            $workerCommand = "& '$escapedWorker' -StateDirectory '$escapedStateDirectory'"
-            $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($workerCommand))
-            Start-Process -FilePath "powershell.exe" -ArgumentList @(
-                "-NoProfile",
-                "-ExecutionPolicy", "Bypass",
-                "-EncodedCommand", $encoded
-            ) | Out-Null
-            Write-AiCliNotifyLog "overlay process started (PowerShell)"
+        } else {
+            Write-AiCliNotifyLog "Anya dispatcher missing; event remains queued" "ERROR"
         }
     } catch {
         Write-AiCliNotifyLog "dispatch failed: $_" "ERROR"
