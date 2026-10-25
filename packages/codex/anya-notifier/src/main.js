@@ -42,6 +42,7 @@ let nativeWorkerStarted = false;
 const windowQuerySource = fs.readFileSync(path.join(__dirname, "window-query.ps1"), "utf8");
 let rendererReady = false;
 let renderedPresentationKey = null;
+let currentForeground = null;
 let fixedWindowSize = null;
 let pending = []; // { windowHandle, windowProcessId, windowProcessStartTicks, source, aborted, leftTerminal, fallbackExpiry }
 let artworkDataUrl = readCachedArtwork();
@@ -417,7 +418,7 @@ function resetRenderedPresentation() {
 
 function renderCurrentNotification() {
   if (!win || !rendererReady || state === "hidden") return;
-  const presentation = buildNotificationPresentation(pending);
+  const presentation = buildNotificationPresentation(pending, currentForeground);
   if (!presentation) {
     renderedPresentationKey = null;
     win.hide();
@@ -493,7 +494,13 @@ function readEvents() {
     createPendingNotification(evt, Date.now(), config.fallbackExpireMs)
   ));
   pending.sort(compareEventsByCompletion);
-  showCelebration();
+  // Take a foreground snapshot before the first presentation. Otherwise a
+  // completion in the active CLI could flash briefly before the next tick.
+  const handles = [...new Set(pending.flatMap((n) => [n.windowHandle, n.terminalWindowHandle]).filter((h) => h > 0))];
+  queryWindows(handles, (result) => {
+    if (result) currentForeground = result.foreground || null;
+    showCelebration();
+  });
 }
 
 // ---- Dismissal detection ------------------------------------------------------
@@ -536,12 +543,13 @@ function tick() {
   readEvents();
   if (pending.length === 0 || windowQueryInFlight) return;
 
-  const handles = [...new Set(pending.map((n) => n.windowHandle).filter((h) => h > 0))];
+  const handles = [...new Set(pending.flatMap((n) => [n.windowHandle, n.terminalWindowHandle]).filter((h) => h > 0))];
   const queried = new Set(pending);
   windowQueryInFlight = true;
   queryWindows(handles, (res) => {
     windowQueryInFlight = false;
     if (!res) return;
+    currentForeground = res.foreground || null;
     const resolved = resolvePendingNotifications(pending, queried, res, Date.now());
     pending = resolved.pending;
     if (pending.length === 0) {

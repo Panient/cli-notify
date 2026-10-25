@@ -16,6 +16,7 @@ function pending(source, handle, options = {}) {
     windowHandle: handle,
     windowProcessId: options.processId ?? handle,
     windowProcessStartTicks: options.startTicks || String(1000 + handle),
+    terminalWindowHandle: options.consoleHandle ?? options.terminalWindowHandle ?? 0,
     createdAt: options.createdAt ?? handle,
     aborted: options.aborted,
   }, 10000, 1800000);
@@ -28,11 +29,15 @@ function pending(source, handle, options = {}) {
 function windowSnapshot(notifications, foreground = 999) {
   return {
     foreground: { root: foreground, processId: foreground, startTicks: String(1000 + foreground) },
-    windows: new Map(notifications.map((n) => [n.windowHandle, {
+    windows: new Map(notifications.flatMap((n) => [[n.windowHandle, {
       root: n.windowHandle,
       processId: n.windowProcessId,
       startTicks: n.windowProcessStartTicks,
-    }])),
+    }], [n.terminalWindowHandle, {
+      root: n.terminalWindowHandle,
+      processId: 7448,
+      startTicks: "console-process",
+    }]]).filter(([handle]) => handle > 0)),
   };
 }
 
@@ -141,6 +146,42 @@ test("recycled or closed terminal handles resolve their notifications", () => {
   snapshot.windows.get(102).startTicks = "different-process";
   const result = resolvePendingNotifications(all, new Set(all), snapshot, 11000);
   assert.deepEqual(result.pending.map((n) => n.source), ["Claude"]);
+});
+
+test("a desktop-launched Pi console defers while its Windows Terminal host is foreground", () => {
+  const notification = pending("Pi", 1246736, {
+    processId: 9408,
+    startTicks: "639284979375203563",
+    consoleHandle: 263722,
+    leftTerminal: false,
+  });
+  const foreground = { root: 1246736, processId: 9408, startTicks: "639284979375203563" };
+  assert.equal(notification.terminalWindowHandle, 263722);
+  assert.notEqual(notification.windowProcessId, 14136, "Explorer must not own this terminal event");
+  assert.equal(buildNotificationPresentation([notification], foreground), null, "Current CLI must not show Anya on first arrival");
+
+  const snapshot = windowSnapshot([notification], 1246736);
+  snapshot.foreground = foreground;
+  const active = resolvePendingNotifications([notification], new Set([notification]), snapshot, 11000);
+  assert.equal(active.pending.length, 1);
+  assert.equal(buildNotificationPresentation(active.pending, foreground), null);
+
+  snapshot.foreground = { root: 656962, processId: 14136, startTicks: "explorer-start" };
+  const away = resolvePendingNotifications(active.pending, new Set(active.pending), snapshot, 11001);
+  assert.equal(away.changed, true);
+  assert.equal(buildNotificationPresentation(away.pending, snapshot.foreground).source, "Pi");
+
+  snapshot.foreground = foreground;
+  const returned = resolvePendingNotifications(away.pending, new Set(away.pending), snapshot, 11002);
+  assert.equal(returned.pending.length, 0, "Returning to this CLI clears its own reminder");
+});
+
+test("a closed hosted console resolves only its own terminal reminder", () => {
+  const notification = pending("Pi", 1246736, { processId: 9408, consoleHandle: 263722 });
+  const snapshot = windowSnapshot([notification], 999);
+  snapshot.windows.delete(263722);
+  const result = resolvePendingNotifications([notification], new Set([notification]), snapshot, 11000);
+  assert.equal(result.pending.length, 0);
 });
 
 test("malformed window identity uses only bounded fallback expiry", () => {

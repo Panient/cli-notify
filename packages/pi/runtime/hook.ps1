@@ -16,6 +16,19 @@ $scriptDir = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyI
 
 $ErrorActionPreference = "SilentlyContinue"
 
+# Pausing is deliberately silent: do not accumulate events while Anya is
+# disabled, so old tasks cannot unexpectedly reappear when it is re-enabled.
+$configPath = Join-Path $StateDirectory "anya-config.json"
+if (Test-Path -LiteralPath $configPath) {
+    try {
+        $notifyConfig = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
+        if ($notifyConfig.useAnya -eq $false) {
+            if ($GeminiOutput) { [Console]::Out.WriteLine("{}") }
+            exit 0
+        }
+    } catch {}
+}
+
 function Write-AiCliNotifyLog {
     param([string]$Message, [string]$Level = "INFO")
     if (-not $env:AI_CLI_NOTIFY_LOG) { return }
@@ -142,6 +155,7 @@ if ($shouldNotify) {
         $windowHandle = [Int64]0
         $windowProcessId = [Int64]0
         $windowProcessStartTicks = [Int64]0
+        $terminalWindowHandle = [Int64]0
         try {
             # One Toolhelp32 snapshot gives the pid->ppid map; avoids spawning a
             # slow WMI/CIM query for every level of the ancestor walk.
@@ -199,33 +213,81 @@ public static class AiCliNotifyWindowNative {
     public static extern IntPtr GetAncestor(IntPtr handle, uint flags);
     [DllImport("user32.dll")]
     public static extern uint GetWindowThreadProcessId(IntPtr handle, out uint processId);
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetConsoleWindow();
+    [DllImport("kernel32.dll")]
+    public static extern bool AttachConsole(uint processId);
+    [DllImport("kernel32.dll")]
+    public static extern bool FreeConsole();
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetWindow(IntPtr handle, uint command);
 }
 "@
             $parentMap = [AiCliNotifyProcessTree]::GetParentMap()
             $processId = [uint32]$PID
-            for ($depth = 0; $depth -lt 10; $depth++) {
+            $consoleHost = [AiCliNotifyWindowNative]::GetConsoleWindow()
+            # A .cmd launched from Explorer still owns a console hosted by
+            # Windows Terminal. Find that console before walking ancestors;
+            # Explorer is a launcher, never the CLI terminal.
+            for ($depth = 0; $consoleHost -eq [IntPtr]::Zero -and $depth -lt 12; $depth++) {
                 if (-not $parentMap.ContainsKey($processId)) { break }
+                $candidate = Get-Process -Id ([int]$processId) -ErrorAction SilentlyContinue
+                if ($candidate -and $candidate.ProcessName -in @("cmd", "powershell", "pwsh")) {
+                    # MainWindowHandle is often zero for a console child even
+                    # though GetConsoleWindow returns its real console HWND.
+                    [void][AiCliNotifyWindowNative]::FreeConsole()
+                    if ([AiCliNotifyWindowNative]::AttachConsole([uint32]$processId)) {
+                        $consoleHost = [AiCliNotifyWindowNative]::GetConsoleWindow()
+                        [void][AiCliNotifyWindowNative]::FreeConsole()
+                        if ($consoleHost -ne [IntPtr]::Zero) { break }
+                    }
+                }
                 $parentId = [int]$parentMap[$processId]
                 if ($parentId -eq 0) { break }
-                $parent = Get-Process -Id $parentId -ErrorAction SilentlyContinue
-                if ($parent -and $parent.MainWindowHandle.ToInt64() -ne 0) {
-                    $mainWindow = $parent.MainWindowHandle
-                    $rootWindow = [AiCliNotifyWindowNative]::GetAncestor($mainWindow, 2)
-                    if ($rootWindow -eq [IntPtr]::Zero) { $rootWindow = $mainWindow }
-                    $ownerProcessId = [uint32]0
-                    [void][AiCliNotifyWindowNative]::GetWindowThreadProcessId($rootWindow, [ref]$ownerProcessId)
-                    if ($ownerProcessId -eq 0) { $ownerProcessId = [uint32]$parent.Id }
-                    $windowHandle = $rootWindow.ToInt64()
-                    $windowProcessId = [Int64]$ownerProcessId
-                    try {
-                        $ownerProcess = Get-Process -Id ([int]$ownerProcessId) -ErrorAction Stop
-                        $windowProcessStartTicks = [Int64]$ownerProcess.StartTime.ToUniversalTime().Ticks
-                    } catch {
-                        $windowProcessStartTicks = [Int64]0
-                    }
-                    break
-                }
                 $processId = [uint32]$parentId
+            }
+            if ($consoleHost -ne [IntPtr]::Zero) {
+                $mainWindow = $consoleHost
+            } else {
+                $processId = [uint32]$PID
+                for ($depth = 0; $depth -lt 12; $depth++) {
+                    if (-not $parentMap.ContainsKey($processId)) { break }
+                    $parentId = [int]$parentMap[$processId]
+                    if ($parentId -eq 0) { break }
+                    $parent = Get-Process -Id $parentId -ErrorAction SilentlyContinue
+                    if ($parent -and $parent.ProcessName -notin @("explorer", "ApplicationFrameHost") -and $parent.MainWindowHandle.ToInt64() -ne 0) {
+                        $mainWindow = $parent.MainWindowHandle
+                        break
+                    }
+                    $processId = [uint32]$parentId
+                }
+            }
+            if ($mainWindow) {
+                $rootWindow = [AiCliNotifyWindowNative]::GetAncestor($mainWindow, 2)
+                if ($rootWindow -eq [IntPtr]::Zero) { $rootWindow = $mainWindow }
+                # ConPTY's console is owned by Windows Terminal. Keep the
+                # console identity for per-tab tracking, but use its host for
+                # foreground detection instead of treating it as a background
+                # pseudo-window or falling back to Explorer.
+                $terminalHost = [AiCliNotifyWindowNative]::GetWindow($rootWindow, 4) # GW_OWNER
+                if ($terminalHost -ne [IntPtr]::Zero) {
+                    $terminalWindowHandle = $rootWindow.ToInt64()
+                    $rootWindow = [AiCliNotifyWindowNative]::GetAncestor($terminalHost, 2)
+                    if ($rootWindow -eq [IntPtr]::Zero) { $rootWindow = $terminalHost }
+                }
+                $ownerProcessId = [uint32]0
+                [void][AiCliNotifyWindowNative]::GetWindowThreadProcessId($rootWindow, [ref]$ownerProcessId)
+                if ($ownerProcessId -eq 0) { $ownerProcessId = [uint32]$parent.Id }
+                $windowHandle = $rootWindow.ToInt64()
+                $windowProcessId = [Int64]$ownerProcessId
+                try {
+                    $ownerProcess = Get-Process -Id ([int]$ownerProcessId) -ErrorAction Stop
+                    $windowProcessStartTicks = [Int64]$ownerProcess.StartTime.ToUniversalTime().Ticks
+                } catch {
+                    $windowProcessStartTicks = [Int64]0
+                }
             }
             # Without the owner PID and its start time, a reused HWND cannot
             # be distinguished safely. Use the bounded no-handle fallback.
@@ -238,6 +300,7 @@ public static class AiCliNotifyWindowNative {
             $windowHandle = [Int64]0
             $windowProcessId = [Int64]0
             $windowProcessStartTicks = [Int64]0
+            $terminalWindowHandle = [Int64]0
         }
 
         $workingDirectory = $PWD.Path
@@ -245,7 +308,7 @@ public static class AiCliNotifyWindowNative {
         if ($payloadCwd -and (Test-Path -LiteralPath ([string]$payloadCwd) -PathType Container)) {
             $workingDirectory = [string]$payloadCwd
         }
-        Write-AiCliNotifyLog "dispatching overlay, windowHandle=$windowHandle terminalPid=$windowProcessId"
+        Write-AiCliNotifyLog "dispatching Anya, hostWindow=$windowHandle hostPid=$windowProcessId consoleWindow=$terminalWindowHandle"
         $queueDirectory = Join-Path $StateDirectory "events"
         New-Item -ItemType Directory -Path $queueDirectory -Force | Out-Null
         $event = [ordered]@{
@@ -255,6 +318,7 @@ public static class AiCliNotifyWindowNative {
             windowHandle = $windowHandle
             windowProcessId = $windowProcessId
             windowProcessStartTicks = [string]$windowProcessStartTicks
+            terminalWindowHandle = $terminalWindowHandle
             cwd = $workingDirectory
             createdAt = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
             aborted = ($data.aborted -eq $true)

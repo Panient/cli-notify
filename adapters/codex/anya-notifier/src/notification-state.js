@@ -35,6 +35,8 @@ function createPendingNotification(event, now, fallbackExpireMs) {
     windowHandle: hasWindowIdentity ? windowHandle : 0,
     windowProcessId: hasWindowIdentity ? windowProcessId : 0,
     windowProcessStartTicks: hasWindowIdentity ? windowProcessStartTicks : "",
+    terminalWindowHandle: hasWindowIdentity && Number.isSafeInteger(Number(event.terminalWindowHandle))
+      ? Number(event.terminalWindowHandle) : 0,
     source: event.source,
     aborted: event.aborted === true,
     cwd: event.cwd || "",
@@ -44,10 +46,17 @@ function createPendingNotification(event, now, fallbackExpireMs) {
   };
 }
 
-function visibleNotifications(pending) {
+function visibleNotifications(pending, foreground = null) {
   // If a terminal is still active, wait until the user leaves it. Unknown
   // terminals retain the immediate notification and bounded fallback expiry.
-  return pending.filter((notification) => notification.windowHandle === 0 || notification.leftTerminal);
+  return pending.filter((notification) => {
+    if (notification.windowHandle === 0) return true;
+    if (foreground && notification.terminalWindowHandle > 0 &&
+        Number(foreground.root) === notification.windowHandle &&
+        Number(foreground.processId) === notification.windowProcessId &&
+        String(foreground.startTicks) === notification.windowProcessStartTicks) return false;
+    return notification.leftTerminal;
+  });
 }
 
 function summarizeNotifications(pending) {
@@ -61,8 +70,8 @@ function summarizeNotifications(pending) {
   return [...groups.values()];
 }
 
-function buildNotificationPresentation(pending) {
-  const visible = visibleNotifications(pending);
+function buildNotificationPresentation(pending, foreground = null) {
+  const visible = visibleNotifications(pending, foreground);
   if (visible.length === 0) return null;
   const latest = visible[visible.length - 1];
   const aborted = latest.aborted === true;
@@ -78,6 +87,7 @@ function buildNotificationPresentation(pending) {
 function resolvePendingNotifications(pending, queried, result, now) {
   const { foreground, windows } = result;
   const keep = [];
+  let changed = false;
   for (const notification of pending) {
     // Events can arrive while the native window query is in flight. Do not
     // judge those entries using a snapshot that did not include their handle.
@@ -91,6 +101,10 @@ function resolvePendingNotifications(pending, queried, result, now) {
     }
 
     const terminal = windows.get(notification.windowHandle);
+    const consoleWindow = notification.terminalWindowHandle > 0
+      ? windows.get(notification.terminalWindowHandle) : null;
+    if (notification.terminalWindowHandle > 0 &&
+        (!consoleWindow || Number(consoleWindow.root) !== notification.terminalWindowHandle)) continue;
     // Reject closed windows, recycled handles, and replaced owner processes.
     if (!terminal || Number(terminal.root) !== notification.windowHandle) continue;
     if (Number(terminal.processId) !== notification.windowProcessId) continue;
@@ -101,10 +115,13 @@ function resolvePendingNotifications(pending, queried, result, now) {
       String(foreground.startTicks) === notification.windowProcessStartTicks;
     // Returning to a terminal only clears that terminal's completed turns.
     if (notification.leftTerminal && sameTerminal) continue;
-    if (Number(foreground.root) > 0 && !sameTerminal) notification.leftTerminal = true;
+    if (Number(foreground.root) > 0 && !sameTerminal && !notification.leftTerminal) {
+      notification.leftTerminal = true;
+      changed = true;
+    }
     keep.push(notification);
   }
-  return { pending: keep, changed: keep.length !== pending.length };
+  return { pending: keep, changed: changed || keep.length !== pending.length };
 }
 
 module.exports = {
