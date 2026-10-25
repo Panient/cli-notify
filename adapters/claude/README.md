@@ -1,6 +1,6 @@
 # AI CLI Notify for Claude Code
 
-This Claude Code plugin shows a small floating reminder when the current agent turn finishes, then collapses into a numbered desktop icon. It disappears when you return to the terminal or close its window. It has no buttons and does not include prompt or response text. It installs one Stop hook.
+When a Claude Code turn finishes, this plugin shows a large desktop Anya reminder. It stays fixed in size while you hover or drag it, aggregates completed terminal tasks, and clears a terminal's reminders when you return to that terminal. It never includes prompt, code, or response text.
 
 Install it through the AI CLI Notify marketplace:
 
@@ -9,4 +9,10 @@ claude plugin marketplace add OWNER/REPO
 claude plugin install ai-cli-notify@ai-cli-notify
 ```
 
-The plugin runs its bundled PowerShell scripts with your Windows account privileges. Review the scripts before installing. It sends no network requests.
+After installing from a cloned GitHub repository, prepare the shared Electron runtime once from the plugin or repository directory:
+
+```powershell
+node .\anya-notifier\scripts\ensure-electron.js
+```
+
+The plugin uses its bundled PowerShell hook with your Windows account privileges; review the scripts before installing. Runtime setup downloads a checksum-verified Electron runtime, and Anya downloads its artwork on first use. Electron and artwork are cached per user, not duplicated in this plugin. No account or prompt data is sent to a notification service.
